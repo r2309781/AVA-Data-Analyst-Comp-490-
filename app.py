@@ -3,17 +3,11 @@ import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# ---------- LOAD ENV ----------
 load_dotenv()
 
-# ---------- SUPABASE SETUP ----------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-
-@st.cache_resource
-def get_supabase_client() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-supabase: Client = get_supabase_client()
 
 # ---------- STREAMLIT PAGE CONFIG ----------
 st.set_page_config(
@@ -23,26 +17,48 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------- BASIC CHECK ----------
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    st.error(
+        "Supabase credentials not found.\n\n"
+        "Make sure SUPABASE_URL and SUPABASE_ANON_KEY are set in your .env file."
+    )
+    st.stop()
+
+# ---------- SUPABASE CLIENT ----------
+@st.cache_resource
+def get_supabase_client() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+supabase: Client = get_supabase_client()
+
 # ---------- SESSION HELPERS ----------
 def set_session(user, access_token):
-    st.session_state["user"] = user
+    st.session_state["user"] = {
+        "id": getattr(user, "id", None),
+        "email": getattr(user, "email", None),
+    }
     st.session_state["access_token"] = access_token
     st.session_state["is_logged_in"] = True
 
 def clear_session():
-    for key in ["user", "access_token", "is_logged_in"]:
-        st.session_state.pop(key, None)
+    st.session_state["user"] = None
+    st.session_state["access_token"] = None
+    st.session_state["is_logged_in"] = False
 
-# Initialize flag once
+# Initialize keys once
 if "is_logged_in" not in st.session_state:
     st.session_state["is_logged_in"] = False
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+if "access_token" not in st.session_state:
+    st.session_state["access_token"] = None
 
 # ---------- LOGIN / SIGNUP UI ----------
 def auth_page():
     st.title("Welcome to GURU")
     st.write("Sign in to access your analytics dashboard.")
 
-    # Tabs for Sign In / Sign Up
     tab_login, tab_signup = st.tabs(["Sign In", "Sign Up"])
 
     # ----- SIGN IN TAB -----
@@ -60,7 +76,7 @@ def auth_page():
                     res = supabase.auth.sign_in_with_password(
                         {"email": email, "password": password}
                     )
-                    if res.user:
+                    if res.user and res.session:
                         set_session(res.user, res.session.access_token)
                         st.success("Signed in successfully.")
                         st.rerun()
@@ -72,14 +88,11 @@ def auth_page():
         st.markdown("---")
         st.caption("Or use your Google account:")
         if st.button("Continue with Google"):
-            # This returns a URL you must redirect the user to.
-            # In Streamlit, you can st.write the URL as a link. Full redirect
-            # handling needs a deployed URL & redirect in Supabase settings.
             try:
                 res = supabase.auth.sign_in_with_oauth(
                     {
                         "provider": "google",
-                        # Optional: "options": {"redirect_to": "https://your-app-url"}
+                        # "options": {"redirect_to": "https://your-app-url"},
                     }
                 )
                 st.write("Open this link to continue Google sign-in:")
@@ -111,30 +124,32 @@ def auth_page():
                 except Exception as e:
                     st.error(f"Sign-up error: {e}")
 
-# ---------- MAIN ----------
+# ---------- MAIN FLOW ----------
 if not st.session_state["is_logged_in"]:
+    # NOT LOGGED IN → ONLY show auth page, NO sidebar/nav at all
     auth_page()
-    st.stop()  # prevent nav from rendering until logged in
 
-# ---------- NAV ONLY AFTER LOGIN ----------
-# Optional logout button at top
-with st.sidebar:
-    st.write(f"Signed in as: {st.session_state['user'].email}")
-    if st.button("Log out"):
-        clear_session()
-        st.rerun()
+else:
+    # LOGGED IN → sidebar + navigation
+    with st.sidebar:
+        user = st.session_state.get("user") or {}
+        email = user.get("email", "Unknown user")
+        st.write(f"Signed in as: {email}")
+        if st.button("Log out"):
+            clear_session()
+            st.rerun()
 
-pages = {
-    "Navigation Bar": [
-        st.Page("app_pages/Dashboard.py",           title="Dashboard Home"),
-        st.Page("app_pages/Sales_Analytics.py",     title="Sales and Analytics"),
-        st.Page("app_pages/Trends_and_Analysis.py", title="Trends and Analysis"),
-        st.Page("app_pages/Inventory_Overview.py",  title="Inventory Overview"),
-        st.Page("app_pages/Transactions.py",        title="Transactions and Inventory"),
-        st.Page("app_pages/Agent.py",               title="AI Insights"),
-        st.Page("app_pages/Reports.py",             title="Reports"),
-        st.Page("app_pages/AIAgent.py",             title="Another Agent"),
-    ]
-}
+    pages = {
+        "Navigation Bar": [
+            st.Page("app_pages/Dashboard.py",           title="Dashboard Home"),
+            st.Page("app_pages/Sales_Analytics.py",     title="Sales and Analytics"),
+            st.Page("app_pages/Trends_and_Analysis.py", title="Trends and Analysis"),
+            st.Page("app_pages/Inventory_Overview.py",  title="Inventory Overview"),
+            st.Page("app_pages/Transactions.py",        title="Transactions and Inventory"),
+            st.Page("app_pages/Agent.py",               title="AI Insights"),
+            st.Page("app_pages/Reports.py",             title="Reports"),
+            st.Page("app_pages/AIAgent.py",             title="Another Agent"),
+        ]
+    }
 
-st.navigation(pages).run()
+    st.navigation(pages).run()
